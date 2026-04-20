@@ -38,6 +38,13 @@ raw_db_url = os.getenv("DATABASE_URL")
 # Fix for common Cloud SQL schema mismatch (postgres vs postgresql)
 if raw_db_url and raw_db_url.startswith("postgres://"):
     DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+    
+    # Ensure sslmode=require is present for Supabase Pooler (Port 6543)
+    if "pooler.supabase.com" in DATABASE_URL and "sslmode=" not in DATABASE_URL:
+        separator = "&" if "?" in DATABASE_URL else "?"
+        DATABASE_URL += f"{separator}sslmode=require"
+        # High timeout and keepalives are recommended for poolers
+        DATABASE_URL += "&connect_timeout=10&keepalives=1"
 else:
     DATABASE_URL = raw_db_url
 
