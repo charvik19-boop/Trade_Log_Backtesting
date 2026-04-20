@@ -228,8 +228,12 @@ def clear_section_keys(prefix):
     # otherwise delete it too.
     st.rerun()
 
-# Initialize Database Connection
-trade_log.init_db()
+@st.cache_resource
+def init_app_connection():
+    """Initialize database once per app lifecycle."""
+    trade_log.init_db()
+
+init_app_connection()
 
 # Initialize Session State for Selection Tracking
 if 'last_bt_sel' not in st.session_state:

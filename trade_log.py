@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import time
 from dotenv import load_dotenv
-import urllib.parse
+from urllib.parse import urlparse, quote_plus
 
 # Try to import supabase for cloud storage
 try:
@@ -38,10 +38,18 @@ SUPABASE_MODE = os.getenv("SUPABASE_MODE", "LOCAL")
 raw_db_url = os.getenv("DATABASE_URL")
 if raw_db_url:
     # Standardize the schema to postgresql://
-    if raw_db_url.startswith("postgres://"):
-        DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
-    else:
-        DATABASE_URL = raw_db_url
+    db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+    
+    # Automatically URL-encode the password if it's not already encoded
+    try:
+        p = urlparse(db_url)
+        if p.password and ('@' in p.password or '#' in p.password):
+            encoded_password = quote_plus(p.password)
+            db_url = db_url.replace(f":{p.password}@", f":{encoded_password}@", 1)
+    except Exception:
+        pass
+
+    DATABASE_URL = db_url
     
     # Apply stability fixes for Supabase Pooler (Port 6543) regardless of initial schema
     if "pooler.supabase.com" in DATABASE_URL and "sslmode=" not in DATABASE_URL:
@@ -49,13 +57,6 @@ if raw_db_url:
         DATABASE_URL += f"{separator}sslmode=require&connect_timeout=10&keepalives=1"
 else:
     DATABASE_URL = None
-
-# Validation for common password encoding mistakes
-if DATABASE_URL:
-    parsed = urllib.parse.urlparse(DATABASE_URL)
-    if parsed.password and ('@' in parsed.password or '#' in parsed.password):
-        print("⚠️ WARNING: Your DATABASE_URL password contains unencoded special characters.")
-        print("   Please URL-encode characters like '@' to '%40' in your Streamlit Secrets.")
 
 ORACLE_DSN = os.getenv("ORACLE_DSN")
 
@@ -490,8 +491,12 @@ def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
     try:
         bucket = "screenshots"
         with open(file_path, 'rb') as f:
-            # Upload with explicit upsert to prevent duplicates causing 409 errors
-            client.storage.from_(bucket).upload(filename, f, {"content-type": "image/png", "x-upsert": "true"})
+            # Capture response to check for errors
+            response = client.storage.from_(bucket).upload(
+                path=filename, 
+                file=f, 
+                file_options={"content-type": "image/png", "x-upsert": "true"}
+            )
             
             # Get public URL
             res = client.storage.from_(bucket).get_public_url(filename)
