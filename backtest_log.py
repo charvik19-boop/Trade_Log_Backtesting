@@ -132,12 +132,12 @@ def get_backtest_trades(session: str = None) -> pd.DataFrame:
     
     try:
         with get_connection() as conn:
+            # pd.read_sql_query handles the cursor internally
             if session:
                 query = f"SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = {placeholder} ORDER BY timestamp DESC"
                 return pd.read_sql_query(query, conn, params=(session,))
-            else:
-                query = "SELECT * FROM trades WHERE is_backtest = 1 ORDER BY timestamp DESC"
-                return pd.read_sql_query(query, conn)
+            query = "SELECT * FROM trades WHERE is_backtest = 1 ORDER BY timestamp DESC"
+            return pd.read_sql_query(query, conn)
     except (sqlite3.Error, psycopg2.Error, pd.io.sql.DatabaseError) as e:
         print(f"Error fetching backtest trades: {e}")
         return pd.DataFrame()

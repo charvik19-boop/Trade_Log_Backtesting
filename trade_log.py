@@ -35,18 +35,19 @@ FORCE_LOCAL = os.getenv("FORCE_LOCAL", "True").lower() == "true"
 SUPABASE_MODE = os.getenv("SUPABASE_MODE", "LOCAL")
 
 raw_db_url = os.getenv("DATABASE_URL")
-# Fix for common Cloud SQL schema mismatch (postgres vs postgresql)
-if raw_db_url and raw_db_url.startswith("postgres://"):
-    DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+if raw_db_url:
+    # Standardize the schema to postgresql://
+    if raw_db_url.startswith("postgres://"):
+        DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+    else:
+        DATABASE_URL = raw_db_url
     
-    # Ensure sslmode=require is present for Supabase Pooler (Port 6543)
+    # Apply stability fixes for Supabase Pooler (Port 6543) regardless of initial schema
     if "pooler.supabase.com" in DATABASE_URL and "sslmode=" not in DATABASE_URL:
         separator = "&" if "?" in DATABASE_URL else "?"
-        DATABASE_URL += f"{separator}sslmode=require"
-        # High timeout and keepalives are recommended for poolers
-        DATABASE_URL += "&connect_timeout=10&keepalives=1"
+        DATABASE_URL += f"{separator}sslmode=require&connect_timeout=10&keepalives=1"
 else:
-    DATABASE_URL = raw_db_url
+    DATABASE_URL = None
 
 # Validation for common password encoding mistakes
 if DATABASE_URL:
@@ -82,11 +83,19 @@ def get_connection():
     """
     db_type = get_active_db_type()
     if db_type == "POSTGRES":
-        if HAS_POSTGRES:
-            return psycopg2.connect(DATABASE_URL)
-        else:
-            print("CRITICAL: psycopg2 driver not found. Check requirements.txt")
-            return sqlite3.connect(LOCAL_DB_PATH)
+        try:
+            if HAS_POSTGRES:
+                return psycopg2.connect(DATABASE_URL)
+            else:
+                print("CRITICAL: psycopg2 driver not found. Check requirements.txt")
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            # Explicitly catch and retry on unexpected SSL closures
+            if "SSL connection has been closed unexpectedly" in str(e):
+                print("⚠️ SSL connection dropped by pooler. Retrying once...")
+                import time
+                time.sleep(1)
+                return psycopg2.connect(DATABASE_URL)
+            raise e
     else:
         return sqlite3.connect(LOCAL_DB_PATH)
 
@@ -262,10 +271,7 @@ def init_db():
                     cursor.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
             
             # Ensure is_backtest is never NULL for existing records to prevent UI filtering issues
-            if db_type == "POSTGRES":
-                cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
-            else:
-                cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
+            cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
             
             conn.commit()
     except psycopg2.OperationalError as e:
@@ -335,19 +341,22 @@ def get_trade_by_id(trade_id: int) -> Optional[Dict]:
     else:
         placeholder = "?"
     
+    conn = None
     try:
         conn = get_connection() # Open connection
         if db_type == "SQLITE":
             conn.row_factory = sqlite3.Row
         
-        with conn: # Manage transaction
-            cursor = conn.cursor()
-            cursor.execute(f"SELECT * FROM trades WHERE id = {placeholder}", (int(trade_id),))
-            row = cursor.fetchone()
-            return dict(row) if row else None # Return result and exit
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM trades WHERE id = {placeholder}", (int(trade_id),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
     except Exception as e:
         print(f"Error fetching trade ID {trade_id}: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 def update_trade(trade_id: int, updated_data: Dict):
     """
