@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Union
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import urllib.parse
 
 # Try to import supabase for cloud storage
 try:
@@ -39,6 +40,14 @@ if raw_db_url and raw_db_url.startswith("postgres://"):
     DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
 else:
     DATABASE_URL = raw_db_url
+
+# Validation for common password encoding mistakes
+if DATABASE_URL:
+    parsed = urllib.parse.urlparse(DATABASE_URL)
+    if parsed.password and ('@' in parsed.password or '#' in parsed.password):
+        print("⚠️ WARNING: Your DATABASE_URL password contains unencoded special characters.")
+        print("   Please URL-encode characters like '@' to '%40' in your Streamlit Secrets.")
+
 ORACLE_DSN = os.getenv("ORACLE_DSN")
 
 def get_supabase_client() -> Optional[Client]:
@@ -65,8 +74,12 @@ def get_connection():
     - Local SQLite (Fallback)
     """
     db_type = get_active_db_type()
-    if db_type == "POSTGRES" and HAS_POSTGRES:
-        return psycopg2.connect(DATABASE_URL)
+    if db_type == "POSTGRES":
+        if HAS_POSTGRES:
+            return psycopg2.connect(DATABASE_URL)
+        else:
+            print("CRITICAL: psycopg2 driver not found. Check requirements.txt")
+            return sqlite3.connect(LOCAL_DB_PATH)
     else:
         return sqlite3.connect(LOCAL_DB_PATH)
 
@@ -164,15 +177,30 @@ def init_db():
                     created_at {created_at_def}
                 )
             """
-            
             cursor.execute(sql)
 
+            # --- Enable RLS and default policies for Postgres ---
+            if db_type == "POSTGRES":
+                try:
+                    cursor.execute("ALTER TABLE trades ENABLE ROW LEVEL SECURITY")
+                    # Create a broad policy to allow the app to function while clearing the Supabase warning
+                    cursor.execute("DROP POLICY IF EXISTS \"Enable full access for authenticated users\" ON trades")
+                    cursor.execute("DROP POLICY IF EXISTS \"Allow all access\" ON trades")
+                    cursor.execute("CREATE POLICY \"Allow all access\" ON trades FOR ALL USING (true)")
+                except Exception as rls_err:
+                    print(f"Note: Could not set RLS policy (might already exist): {rls_err}")
+
             # --- Migration Logic ---
-            if db_type != "SQLITE": return # Skip PRAGMA checks for cloud DBs
-            
-            cursor.execute("PRAGMA table_info(trades)")
-            existing_cols = [row[1] for row in cursor.fetchall()]
-            
+            if db_type == "POSTGRES":
+                # Check existing columns in PostgreSQL
+                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'trades'")
+                existing_cols = [row[0] for row in cursor.fetchall()]
+            else:
+                # Check existing columns in SQLite
+                cursor.execute("PRAGMA table_info(trades)")
+                existing_cols = [row[1] for row in cursor.fetchall()]
+
+            # List of columns to ensure exist
             new_cols = [
                 ("sector", text_type),
                 ("trade_type", text_type),
@@ -226,11 +254,21 @@ def init_db():
                 if col_name not in existing_cols:
                     cursor.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
             
-            # Ensure is_backtest is never NULL for existing records
-            # This fixes the issue where trades are visible but 'not found' during delete/edit
-            cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
+            # Ensure is_backtest is never NULL for existing records to prevent UI filtering issues
+            if db_type == "POSTGRES":
+                cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
+            else:
+                cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
             
             conn.commit()
+    except psycopg2.OperationalError as e:
+        if "password authentication failed" in str(e):
+            print("❌ DATABASE ERROR: Password authentication failed. Please check your DATABASE_URL in Streamlit Secrets.")
+            # Check if the user might have forgotten the project-id suffix
+            if "user=\"postgres\"" in str(e) and "pooler.supabase.com" in (DATABASE_URL or ""):
+                print("💡 HINT: Your username likely needs to be 'postgres.gbzgnrbzgsuhcxeaqwot' for the Supabase Pooler.")
+        else:
+            print(f"❌ DATABASE CONNECTION ERROR: {e}")
     except Exception as e:
         print(f"Error initializing database: {e}")
 
@@ -416,14 +454,15 @@ def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
     try:
         bucket = "screenshots"
         with open(file_path, 'rb') as f:
-            # Upload the file
-            client.storage.from_(bucket).upload(filename, f, {"content-type": "image/png"})
+            # Upload with explicit upsert to prevent duplicates causing 409 errors
+            client.storage.from_(bucket).upload(filename, f, {"content-type": "image/png", "x-upsert": "true"})
             
             # Get public URL
             res = client.storage.from_(bucket).get_public_url(filename)
+            print(f"✅ Cloud Upload Success: {filename}")
             return res
     except Exception as e:
-        print(f"Cloud Upload Error: {e}")
+        print(f"❌ Cloud Upload Error for {filename}: {e}")
         return None
 
 

@@ -231,6 +231,10 @@ def clear_section_keys(prefix):
 # Initialize Database Connection
 trade_log.init_db()
 
+# Initialize Session State for Selection Tracking
+if 'last_bt_sel' not in st.session_state:
+    st.session_state.last_bt_sel = None
+
 # Fetch options from Excel once for all modules that need it
 opts = backtest_log.get_excel_source_options()
 
@@ -238,7 +242,13 @@ st.title("📈 Pro Backtesting Journal")
 
 # Sidebar for navigation
 menu = st.sidebar.selectbox("Module", ["Trade Entry", "Trade History", "Analytics"])
-st.sidebar.info(f"Connected to: {trade_log.get_active_db_type()} ({trade_log.SUPABASE_MODE})")
+db_type = trade_log.get_active_db_type()
+if db_type == "POSTGRES" and trade_log.DATABASE_URL:
+    # Extract host from URL to show in sidebar
+    host = trade_log.DATABASE_URL.split('@')[-1].split(':')[0]
+    st.sidebar.success(f"🚀 {db_type} | {host}")
+else:
+    st.sidebar.info(f"🏠 {db_type} ({trade_log.SUPABASE_MODE})")
 
 if menu == "Trade Entry":
     st.header("New Backtest Entry")

@@ -42,7 +42,7 @@ def calculate_advanced_metrics(is_backtest: bool = False, session: str = None, d
     profit_factor = gross_profit / gross_loss if gross_loss != 0 else float('inf')
     expectancy = ( (win_rate/100) * avg_win ) + ( (1 - win_rate/100) * avg_loss )
 
-    # Sharpe Ratio (Simplified Annualized)
+    # Sharpe Ratio (Simplified Annualized) - Added protection against zero standard deviation
     if len(pnl) > 1 and pnl.std() > 1e-6:
         sharpe_ratio = (pnl.mean() / pnl.std()) * np.sqrt(252)
     else:
