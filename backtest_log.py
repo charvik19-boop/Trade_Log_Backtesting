@@ -1,4 +1,5 @@
 import sqlite3
+import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
@@ -15,6 +16,7 @@ try:
 except ImportError:
     class oracledb: Error = Exception
 
+@st.cache_data(show_spinner="Loading strategy options...")
 def get_excel_source_options() -> Dict[str, List[str]]:
     """
     Reads Source_Data.xlsx and returns unique values for dropdowns.
@@ -98,8 +100,10 @@ def add_backtest_trade(trade_data: Dict) -> int:
     data_to_insert = {col: trade_data.get(col) for col in columns}
     col_names = ", ".join(columns)
 
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             if db_type == "POSTGRES":
                 # Standard Postgres approach using RETURNING
@@ -117,6 +121,9 @@ def add_backtest_trade(trade_data: Dict) -> int:
     except (sqlite3.Error, psycopg2.Error, oracledb.Error) as e:
         print(f"Error adding backtest trade: {e}")
         return -1
+    finally:
+        if conn:
+            conn.close()
 
 def get_backtest_trades(session: str = None) -> pd.DataFrame:
     """
@@ -130,8 +137,10 @@ def get_backtest_trades(session: str = None) -> pd.DataFrame:
     else:
         placeholder = "?"
     
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             # pd.read_sql_query handles the cursor internally
             if session:
                 query = f"SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = {placeholder} ORDER BY timestamp DESC"
@@ -141,19 +150,27 @@ def get_backtest_trades(session: str = None) -> pd.DataFrame:
     except (sqlite3.Error, psycopg2.Error, pd.io.sql.DatabaseError) as e:
         print(f"Error fetching backtest trades: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 def get_all_backtest_sessions() -> List[str]:
     """
     Returns a list of all unique backtest session names.
     """
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT backtest_session FROM trades WHERE is_backtest = 1")
             return [row[0] for row in cursor.fetchall() if row[0] is not None]
     except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error fetching sessions: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 def calculate_backtest_metrics(session: str = None) -> Dict:
     """
@@ -206,8 +223,10 @@ def delete_backtest_trade(trade_id: int):
     else:
         placeholder = "?"
 
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             # Safety check to ensure we only delete backtest records
             cursor.execute(f"DELETE FROM trades WHERE id = {placeholder}", (int(trade_id),))
@@ -218,6 +237,9 @@ def delete_backtest_trade(trade_id: int):
                 print(f"Backtest trade ID {trade_id} deleted.")
     except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error deleting backtest trade: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 # ==========================================
 # EXAMPLE USAGE

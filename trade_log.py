@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Union
 import os
 from pathlib import Path
+import time
 from dotenv import load_dotenv
 import urllib.parse
 
@@ -92,7 +93,6 @@ def get_connection():
             # Explicitly catch and retry on unexpected SSL closures
             if "SSL connection has been closed unexpectedly" in str(e):
                 print("⚠️ SSL connection dropped by pooler. Retrying once...")
-                import time
                 time.sleep(1)
                 return psycopg2.connect(DATABASE_URL)
             raise e
@@ -118,8 +118,10 @@ def init_db():
     int_type = "INTEGER"
     if_not_exists = "IF NOT EXISTS"
     
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             
             sql = f"""
@@ -284,6 +286,9 @@ def init_db():
             print(f"❌ DATABASE CONNECTION ERROR: {e}")
     except Exception as e:
         print(f"Error initializing database: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def calculate_pnl_metrics(trade_data: Dict) -> Dict:
     """
@@ -385,8 +390,10 @@ def update_trade(trade_id: int, updated_data: Dict):
     values = [merged[col] for col in updatable_cols]
     values.append(trade_id)
 
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             if db_type == "ORACLE":
                 # Oracle needs names or specific positional indices for larger sets usually, 
@@ -397,6 +404,9 @@ def update_trade(trade_id: int, updated_data: Dict):
             conn.commit()
     except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error updating trade ID {trade_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def delete_trade(trade_id: int):
     """
@@ -410,13 +420,18 @@ def delete_trade(trade_id: int):
     else:
         placeholder = "?"
 
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             cursor.execute(f"DELETE FROM trades WHERE id = {placeholder}", (trade_id,))
             conn.commit()
     except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error deleting trade ID {trade_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def add_trade(trade_data: Dict) -> int:
     """Inserts a live trade record (is_backtest = 0)."""
@@ -443,8 +458,10 @@ def add_trade(trade_data: Dict) -> int:
     col_names = ", ".join(columns)
     data_to_insert = [trade_data.get(col) for col in columns]
 
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             cursor = conn.cursor()
             if db_type == "POSTGRES":
                 query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders}) RETURNING id"
@@ -460,6 +477,9 @@ def add_trade(trade_data: Dict) -> int:
     except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error adding live trade: {e}")
         return -1
+    finally:
+        if conn:
+            conn.close()
 
 def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
     """Uploads a local file to Supabase storage and returns the public URL."""
@@ -484,13 +504,18 @@ def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
 
 def get_live_trades() -> pd.DataFrame:
     """Returns all live trades (is_backtest = 0) as a DataFrame."""
+    conn = None
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        with conn:
             query = "SELECT * FROM trades WHERE is_backtest = 0 ORDER BY timestamp DESC"
             return pd.read_sql_query(query, conn)
     except Exception as e:
         print(f"Error fetching live trades: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 def calculate_live_metrics() -> Dict:
     """Calculates summary metrics for live trades."""

@@ -639,12 +639,19 @@ elif menu == "Trade History":
         st.session_state.last_bt_sel = current_selection
 
         with btn_col2:
-            sel_sr_no = st.number_input("Enter Sr.No for Action", min_value=0, max_value=len(df), step=1)
-            if st.button("Delete Trade", type="secondary", width='stretch'):
-                if sel_sr_no > 0:
-                    # Map Sr.No back to the actual database ID using the original dataframe
-                    selected_trade = df.iloc[sel_sr_no - 1]
+            if st.button("🗑️ Delete Selected Trade", type="secondary", width='stretch'):
+                if current_selection is not None:
+                    selected_trade = df.iloc[current_selection]
                     confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
+                else:
+                    st.warning("Please select a row in the table above to delete.")
+            
+            # Optional: Keep the manual Sr.No input as a secondary fallback if desired
+            with st.popover("Manual ID Action"):
+                sel_sr_no = st.number_input("Enter Sr.No to Delete", min_value=0, max_value=len(df), step=1)
+                if st.button("Delete by Sr.No", type="primary"):
+                     selected_trade = df.iloc[sel_sr_no - 1]
+                     confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
     else:
         st.info("No trades found for this session.")
 
