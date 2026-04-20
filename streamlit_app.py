@@ -460,6 +460,9 @@ if menu == "Trade Entry":
                 # If Cloud Mode, upload and get URL
                 if not trade_log.FORCE_LOCAL:
                     screenshot_path = trade_log.upload_to_supabase(local_path, filename)
+                    if not screenshot_path:
+                        st.error("Failed to upload screenshot to cloud. Check logs.")
+                        return # Stop execution if upload failed in cloud mode
                 else:
                     screenshot_path = local_path
 

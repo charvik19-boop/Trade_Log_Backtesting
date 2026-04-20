@@ -203,9 +203,10 @@ def init_db():
                 try:
                     cursor.execute("ALTER TABLE trades ENABLE ROW LEVEL SECURITY")
                     # Create a broad policy to allow the app to function while clearing the Supabase warning
+                    cursor.execute("DROP POLICY IF EXISTS \"Allow all access for postgres role\" ON trades") # New policy name
                     cursor.execute("DROP POLICY IF EXISTS \"Enable full access for authenticated users\" ON trades")
                     cursor.execute("DROP POLICY IF EXISTS \"Allow all access\" ON trades")
-                    cursor.execute("CREATE POLICY \"Allow all access\" ON trades FOR ALL USING (true)")
+                    cursor.execute("CREATE POLICY \"Allow all access for postgres role\" ON trades FOR ALL TO postgres USING (true) WITH CHECK (true)")
                 except Exception as rls_err:
                     print(f"Note: Could not set RLS policy (might already exist): {rls_err}")
 
@@ -492,7 +493,7 @@ def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
         bucket = "screenshots"
         with open(file_path, 'rb') as f:
             # Capture response to check for errors
-            response = client.storage.from_(bucket).upload(
+            client.storage.from_(bucket).upload(
                 path=filename, 
                 file=f, 
                 file_options={"content-type": "image/png", "x-upsert": "true"}
@@ -500,7 +501,7 @@ def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
             
             # Get public URL
             res = client.storage.from_(bucket).get_public_url(filename)
-            print(f"✅ Cloud Upload Success: {filename}")
+            print(f"✅ Cloud Upload Success: {filename} | URL: {res}")
             return res
     except Exception as e:
         print(f"❌ Cloud Upload Error for {filename}: {e}")
