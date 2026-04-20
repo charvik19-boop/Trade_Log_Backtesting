@@ -252,7 +252,7 @@ if db_type == "POSTGRES" and trade_log.DATABASE_URL:
     host = trade_log.DATABASE_URL.split('@')[-1].split(':')[0]
     st.sidebar.success(f"🚀 {db_type} | {host}")
 else:
-    st.sidebar.info(f"🏠 {db_type} ({trade_log.SUPABASE_MODE})")
+    st.sidebar.info(f"🏠 {db_type}")
 
 if menu == "Trade Entry":
     st.header("New Backtest Entry")
@@ -457,14 +457,7 @@ if menu == "Trade Entry":
                 with open(local_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # If Cloud Mode, upload and get URL
-                if not trade_log.FORCE_LOCAL:
-                    screenshot_path = trade_log.upload_to_supabase(local_path, filename)
-                    if not screenshot_path:
-                        st.error("Failed to upload screenshot to cloud. Check logs.")
-                        return # Stop execution if upload failed in cloud mode
-                else:
-                    screenshot_path = local_path
+                screenshot_path = local_path
 
             full_data = {
                 "strategy": strategy, "symbol": symbol, "sector": sector,

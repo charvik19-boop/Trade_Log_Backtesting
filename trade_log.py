@@ -16,24 +16,15 @@ import time
 from dotenv import load_dotenv
 from urllib.parse import urlparse, quote_plus
 
-# Try to import supabase for cloud storage
-try:
-    from supabase import create_client, Client
-except ImportError:
-    Client = None
-
 # Database Configuration
 BASE_DIR = Path(__file__).resolve().parent
 if (BASE_DIR / ".env").exists():
     load_dotenv(dotenv_path=BASE_DIR / ".env", override=True)
 
 LOCAL_DB_PATH = os.path.join(BASE_DIR, "trading_journal.db")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Force Local Mode
 FORCE_LOCAL = os.getenv("FORCE_LOCAL", "True").lower() == "true"
-SUPABASE_MODE = os.getenv("SUPABASE_MODE", "LOCAL")
 
 raw_db_url = os.getenv("DATABASE_URL")
 if raw_db_url:
@@ -42,28 +33,24 @@ if raw_db_url:
     
     # Automatically URL-encode the password if it's not already encoded
     try:
-        p = urlparse(db_url)
-        if p.password and ('@' in p.password or '#' in p.password):
-            encoded_password = quote_plus(p.password)
-            db_url = db_url.replace(f":{p.password}@", f":{encoded_password}@", 1)
+        parsed = urlparse(db_url)
+        new_user = parsed.username
+        new_pass = parsed.password
+        if new_pass and ('@' in new_pass or '#' in new_pass):
+            new_pass = quote_plus(new_pass)
+        
+        # Rebuild URL with corrected credentials
+        netloc = f"{new_user}:{new_pass}@{parsed.hostname}"
+        if parsed.port: netloc += f":{parsed.port}"
+        db_url = parsed._replace(netloc=netloc).geturl()
     except Exception:
         pass
 
     DATABASE_URL = db_url
-    
-    # Apply stability fixes for Supabase Pooler (Port 6543) regardless of initial schema
-    if "pooler.supabase.com" in DATABASE_URL and "sslmode=" not in DATABASE_URL:
-        separator = "&" if "?" in DATABASE_URL else "?"
-        DATABASE_URL += f"{separator}sslmode=require&connect_timeout=10&keepalives=1"
 else:
     DATABASE_URL = None
 
 ORACLE_DSN = os.getenv("ORACLE_DSN")
-
-def get_supabase_client() -> Optional[Client]:
-    if SUPABASE_URL and SUPABASE_KEY and SUPABASE_URL.startswith("http") and Client:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    return None
 
 def get_active_db_type():
     """Helper to determine which database is currently active."""
@@ -281,9 +268,6 @@ def init_db():
     except psycopg2.OperationalError as e:
         if "password authentication failed" in str(e):
             print("❌ DATABASE ERROR: Password authentication failed. Please check your DATABASE_URL in Streamlit Secrets.")
-            # Check if the user might have forgotten the project-id suffix
-            if "user=\"postgres\"" in str(e) and "pooler.supabase.com" in (DATABASE_URL or ""):
-                print("💡 HINT: Your username likely needs to be 'postgres.gbzgnrbzgsuhcxeaqwot' for the Supabase Pooler.")
         else:
             print(f"❌ DATABASE CONNECTION ERROR: {e}")
     except Exception as e:
@@ -482,31 +466,6 @@ def add_trade(trade_data: Dict) -> int:
     finally:
         if conn:
             conn.close()
-
-def upload_to_supabase(file_path: str, filename: str) -> Optional[str]:
-    """Uploads a local file to Supabase storage and returns the public URL."""
-    client = get_supabase_client()
-    if not client:
-        return None
-    
-    try:
-        bucket = "screenshots"
-        with open(file_path, 'rb') as f:
-            # Capture response to check for errors
-            client.storage.from_(bucket).upload(
-                path=filename, 
-                file=f, 
-                file_options={"content-type": "image/png", "x-upsert": "true"}
-            )
-            
-            # Get public URL
-            res = client.storage.from_(bucket).get_public_url(filename)
-            print(f"✅ Cloud Upload Success: {filename} | URL: {res}")
-            return res
-    except Exception as e:
-        print(f"❌ Cloud Upload Error for {filename}: {e}")
-        return None
-
 
 def get_live_trades() -> pd.DataFrame:
     """Returns all live trades (is_backtest = 0) as a DataFrame."""

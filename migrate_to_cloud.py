@@ -28,7 +28,12 @@ def migrate_data():
     init_db()
 
     print("Uploading to Cloud... this may take a moment.")
-    cloud_conn = get_connection()
+    try:
+        cloud_conn = get_connection()
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: Could not establish cloud connection. Migration aborted.\nDetails: {e}")
+        return
+
     cursor = cloud_conn.cursor()
 
     # Prepare columns and placeholders
