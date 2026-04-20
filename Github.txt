@@ -1,0 +1,5 @@
+
+
+git config --global user.email "charvik19@gmail.com"
+git config --global user.name "UTTAMBHAI M TANDEL"
+

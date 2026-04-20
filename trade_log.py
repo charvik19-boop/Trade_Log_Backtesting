@@ -32,11 +32,17 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Force Local Mode
 FORCE_LOCAL = os.getenv("FORCE_LOCAL", "True").lower() == "true"
 SUPABASE_MODE = os.getenv("SUPABASE_MODE", "LOCAL")
-DATABASE_URL = os.getenv("DATABASE_URL")
+
+raw_db_url = os.getenv("DATABASE_URL")
+# Fix for common Cloud SQL schema mismatch (postgres vs postgresql)
+if raw_db_url and raw_db_url.startswith("postgres://"):
+    DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+else:
+    DATABASE_URL = raw_db_url
 ORACLE_DSN = os.getenv("ORACLE_DSN")
 
 def get_supabase_client() -> Optional[Client]:
-    if SUPABASE_URL and SUPABASE_KEY and Client:
+    if SUPABASE_URL and SUPABASE_KEY and SUPABASE_URL.startswith("http") and Client:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     return None
 
@@ -373,18 +379,31 @@ def add_trade(trade_data: Dict) -> int:
         'market_context', 'notes', 'screenshot_path', 'sector', 'trade_type'
     ]
 
-    placeholders = ", ".join(["?"] * len(columns))
+    db_type = get_active_db_type()
+    if db_type == "ORACLE":
+        placeholders = ", ".join([f":{i+1}" for i in range(len(columns))])
+    else:
+        placeholder = "%s" if db_type == "POSTGRES" else "?"
+        placeholders = ", ".join([placeholder] * len(columns))
+
     col_names = ", ".join(columns)
     data_to_insert = [trade_data.get(col) for col in columns]
 
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            if db_type == "POSTGRES":
+                query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders}) RETURNING id"
+                cursor.execute(query, tuple(data_to_insert))
+                new_id = cursor.fetchone()[0]
+                conn.commit()
+                return new_id
+            
             query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
             cursor.execute(query, tuple(data_to_insert))
             conn.commit()
             return cursor.lastrowid
-    except sqlite3.Error as e:
+    except (sqlite3.Error, psycopg2.Error) as e:
         print(f"Error adding live trade: {e}")
         return -1
 

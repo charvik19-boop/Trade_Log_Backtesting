@@ -181,6 +181,15 @@ def show_edit_popup(trade_id):
         updated_data['take_profit'] = c2.number_input("Target Price", value=float(trade.get('take_profit') or 0))
         updated_data['exit_price'] = c1.number_input("Exit Price", value=float(trade.get('exit_price') or 0))
         
+        # Real-time calculated Read-only values in Edit Mode
+        ep = updated_data['entry_price']
+        sl = updated_data['stop_loss']
+        tp = updated_data['take_profit']
+        if ep > 0 and sl > 0:
+            sl_p = ep - sl if updated_data['direction'] == "LONG" else ep + sl
+            rr = round((abs(tp - ep) / sl), 2) if tp > 0 else 0
+            st.info(f"💡 **Calculated SL Price:** {sl_p:.2f} | **Target RR:** {rr}")
+
         try: ed = datetime.strptime(trade.get('exit_date', ''), "%Y-%m-%d") if trade.get('exit_date') else datetime.now()
         except: ed = datetime.now()
         updated_data['exit_date'] = str(c2.date_input("Exit Date", ed))
@@ -198,6 +207,15 @@ def show_edit_popup(trade_id):
     if st.button("🚀 Update Trade", type="primary", width='stretch'):
         trade_log.update_trade(trade_id, updated_data) # This button is inside a dialog, use_container_width is not directly applicable here.
         st.success("Trade updated successfully!")
+        st.rerun()
+
+@st.dialog("⚠️ Confirm Deletion")
+def confirm_delete_dialog(trade_id, symbol):
+    st.warning(f"Are you sure you want to permanently delete the trade for **{symbol}** (ID: {trade_id})?")
+    st.info("This action cannot be undone.")
+    if st.button("🔥 Yes, Delete Permanently", type="primary", width="stretch"):
+        backtest_log.delete_backtest_trade(trade_id)
+        st.success("Trade deleted.")
         st.rerun()
 
 def clear_section_keys(prefix):
@@ -615,9 +633,8 @@ elif menu == "Trade History":
             if st.button("Delete Trade", type="secondary", width='stretch'):
                 if sel_sr_no > 0:
                     # Map Sr.No back to the actual database ID using the original dataframe
-                    real_id = df.iloc[sel_sr_no - 1]['id']
-                    backtest_log.delete_backtest_trade(real_id)
-                    st.rerun()
+                    selected_trade = df.iloc[sel_sr_no - 1]
+                    confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
     else:
         st.info("No trades found for this session.")
 

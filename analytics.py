@@ -42,9 +42,11 @@ def calculate_advanced_metrics(is_backtest: bool = False, session: str = None, d
     profit_factor = gross_profit / gross_loss if gross_loss != 0 else float('inf')
     expectancy = ( (win_rate/100) * avg_win ) + ( (1 - win_rate/100) * avg_loss )
 
-    # Sharpe Ratio (Simplified Annualized - assuming daily trades)
-    # We use a 252-day multiplier for standard financial visualization
-    sharpe_ratio = (pnl.mean() / pnl.std()) * np.sqrt(252) if len(pnl) > 1 and pnl.std() != 0 else 0
+    # Sharpe Ratio (Simplified Annualized)
+    if len(pnl) > 1 and pnl.std() > 1e-6:
+        sharpe_ratio = (pnl.mean() / pnl.std()) * np.sqrt(252)
+    else:
+        sharpe_ratio = 0.0
 
     # Dynamic Drawdown Calculation: Use the capital of the first trade or fallback to 10k
     initial_capital = df['capital_per_trade'].iloc[0] if 'capital_per_trade' in df.columns and df['capital_per_trade'].iloc[0] > 0 else 10000

@@ -19,7 +19,8 @@ def get_excel_source_options() -> Dict[str, List[str]]:
     """
     Reads Source_Data.xlsx and returns unique values for dropdowns.
     """
-    excel_path = "Source_Data.xlsx"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    excel_path = os.path.join(base_dir, "Source_Data.xlsx")
     options = {
         "strategies": [],
         "chart_patterns": [],
