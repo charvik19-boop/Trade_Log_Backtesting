@@ -1,0 +1,8 @@
+pandas
+streamlit>=1.34.0
+supabase
+python-dotenv
+matplotlib
+fpdf2
+psycopg2-binary
+openpyxl

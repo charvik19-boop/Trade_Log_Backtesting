@@ -1,0 +1,18 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Local Environment & Secrets
+.env
+venv/
+.venv/
+
+# Streamlit folders
+.streamlit/
+
+# Local Data & Screenshots
+*.db
+screenshots/
+*.csv
+*.xlsx
+!Source_Data.xlsx
