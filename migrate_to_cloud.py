@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 import os
-from trade_log import get_connection, init_db, LOCAL_DB_PATH
+from trade_log import get_connection, init_db, LOCAL_DB_PATH, get_placeholder
 
 def migrate_data():
     """
@@ -36,7 +36,8 @@ def migrate_data():
     columns = [col for col in df.columns if col != 'id'] # Let Cloud handle IDs
     col_names = ", ".join(columns)
     
-    placeholders = ", ".join(["?"] * len(columns))
+    ph = get_placeholder()
+    placeholders = ", ".join([ph] * len(columns))
     query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
 
     success_count = 0

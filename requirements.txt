@@ -5,3 +5,5 @@ numpy
 fpdf2
 python-dotenv
 openpyxl
+psycopg2-binary
+supabase>=2.0.0

@@ -1,10 +1,12 @@
 import sqlite3
+import psycopg2
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from urllib.parse import urlparse, quote_plus
 
 # Database Configuration
 BASE_DIR = Path(__file__).resolve().parent
@@ -13,22 +15,69 @@ if (BASE_DIR / ".env").exists():
 
 LOCAL_DB_PATH = os.path.join(BASE_DIR, "trading_journal.db")
 
+def _normalize_db_url(raw: str) -> str:
+    """Normalizes a postgres URL: fixes schema prefix and URL-encodes the password."""
+    url = raw.replace("postgres://", "postgresql://", 1)
+    try:
+        parsed = urlparse(url)
+        new_pass = quote_plus(parsed.password) if parsed.password else ""
+        netloc = f"{parsed.username}:{new_pass}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        return parsed._replace(netloc=netloc).geturl()
+    except Exception:
+        return url
+
+def _resolve_db_url() -> Optional[str]:
+    """
+    Picks the best available database URL using a priority chain:
+      FORCE_LOCAL=True  → always SQLite
+      SUPABASE_SESSION_URL      (IPv4 pooler — recommended for Streamlit)
+      SUPABASE_TRANSACTION_URL  (pgBouncer — good for serverless)
+      SUPABASE_DIRECT_URL       (direct — needs IPv6)
+      DATABASE_URL              (legacy fallback)
+      → SQLite if none found
+    """
+    force_local = os.getenv("FORCE_LOCAL", "False").strip().lower() in ("true", "1", "yes")
+    if force_local:
+        return None
+    candidates = [
+        os.getenv("SUPABASE_SESSION_URL"),
+        os.getenv("SUPABASE_TRANSACTION_URL"),
+        os.getenv("SUPABASE_DIRECT_URL"),
+        os.getenv("DATABASE_URL"),
+    ]
+    raw = next((u for u in candidates if u), None)
+    return _normalize_db_url(raw) if raw else None
+
+DATABASE_URL = _resolve_db_url()
+
 def get_active_db_type():
     """Helper to determine which database is currently active."""
+    if DATABASE_URL:
+        return "POSTGRES"
     return "SQLITE"
 
 def get_connection():
     """
-    Returns a local SQLite database connection.
+    Returns a database connection (Supabase/Postgres or local SQLite).
     """
+    if get_active_db_type() == "POSTGRES":
+        return psycopg2.connect(DATABASE_URL)
     return sqlite3.connect(LOCAL_DB_PATH)
 
 def init_db():
     """
     Initializes the SQLite database and creates the trades table if it doesn't exist.
     """
-    id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
-    created_at_def = "TEXT DEFAULT CURRENT_TIMESTAMP"
+    db_type = get_active_db_type()
+    
+    if db_type == "POSTGRES":
+        id_type = "SERIAL PRIMARY KEY"
+        created_at_def = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+    else:
+        id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        created_at_def = "TEXT DEFAULT CURRENT_TIMESTAMP"
 
     text_type = "TEXT"
     real_type = "REAL"
@@ -114,9 +163,20 @@ def init_db():
             """
             cursor.execute(sql)
 
-            # Check existing columns in SQLite
-            cursor.execute("PRAGMA table_info(trades)")
-            existing_cols = [row[1] for row in cursor.fetchall()]
+            if db_type == "POSTGRES":
+                # Enable RLS for Supabase
+                try:
+                    cursor.execute("ALTER TABLE trades ENABLE ROW LEVEL SECURITY")
+                    cursor.execute("DROP POLICY IF EXISTS \"Allow all access\" ON trades")
+                    cursor.execute("CREATE POLICY \"Allow all access\" ON trades FOR ALL TO postgres USING (true) WITH CHECK (true)")
+                except Exception:
+                    pass
+                
+                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'trades'")
+                existing_cols = [row[0] for row in cursor.fetchall()]
+            else:
+                cursor.execute("PRAGMA table_info(trades)")
+                existing_cols = [row[1] for row in cursor.fetchall()]
 
             # List of columns to ensure exist
             new_cols = [
@@ -182,10 +242,17 @@ def init_db():
         if conn:
             conn.close()
 
-def calculate_pnl_metrics(trade_data: Dict) -> Dict:
+def get_placeholder():
+    """Returns the correct SQL placeholder for the active database."""
+    return "%s" if get_active_db_type() == "POSTGRES" else "?"
+
+def calculate_pnl_metrics(trade_data: Union[Dict, sqlite3.Row]) -> Dict:
     """
     Calculates PnL and R-Multiple based on entry/exit logic.
     """
+    if not isinstance(trade_data, dict):
+        trade_data = dict(trade_data)
+
     entry = trade_data.get('entry_price', 0.0)
     sl_points = trade_data.get('stop_loss', 0.0)
     target = trade_data.get('take_profit', 0.0)
@@ -233,11 +300,12 @@ def get_trade_by_id(trade_id: int) -> Optional[Dict]:
     conn = None
     try:
         conn = get_connection() # Open connection
-        conn.row_factory = sqlite3.Row
+        if get_active_db_type() == "SQLITE":
+            conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM trades WHERE id = ?", (int(trade_id),))
+        cursor.execute(f"SELECT * FROM trades WHERE id = {get_placeholder()}", (int(trade_id),))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return (dict(row) if row else None) if get_active_db_type() == "SQLITE" else (dict(zip([column[0] for column in cursor.description], row)) if row else None)
     except Exception as e:
         print(f"Error fetching trade ID {trade_id}: {e}")
         return None
@@ -260,7 +328,7 @@ def update_trade(trade_id: int, updated_data: Dict):
 
     # Exclude non-updatable internal columns
     updatable_cols = [k for k in merged.keys() if k not in ('id', 'created_at')]
-    set_clause = ", ".join([f"{col} = ?" for col in updatable_cols])
+    set_clause = ", ".join([f"{col} = {get_placeholder()}" for col in updatable_cols])
     values = [merged[col] for col in updatable_cols]
     values.append(trade_id)
 
@@ -269,7 +337,7 @@ def update_trade(trade_id: int, updated_data: Dict):
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = ?", tuple(values))
+            cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = {get_placeholder()}", tuple(values))
             conn.commit()
     except sqlite3.Error as e:
         print(f"Error updating trade ID {trade_id}: {e}")
@@ -286,7 +354,7 @@ def delete_trade(trade_id: int):
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+            cursor.execute(f"DELETE FROM trades WHERE id = {get_placeholder()}", (trade_id,))
             conn.commit()
     except sqlite3.Error as e:
         print(f"Error deleting trade ID {trade_id}: {e}")
@@ -309,7 +377,7 @@ def add_trade(trade_data: Dict) -> int:
         'market_context', 'notes', 'screenshot_path', 'sector', 'trade_type'
     ]
 
-    placeholders = ", ".join(["?"] * len(columns))
+    placeholders = ", ".join([get_placeholder()] * len(columns))
     col_names = ", ".join(columns)
     data_to_insert = [trade_data.get(col) for col in columns]
 

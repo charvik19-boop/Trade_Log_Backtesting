@@ -1,12 +1,10 @@
 import sqlite3
-import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
-from trade_log import get_connection, init_db, calculate_pnl_metrics
+from trade_log import get_connection, init_db, calculate_pnl_metrics, get_placeholder
 
-@st.cache_data(show_spinner="Loading strategy options...")
 def get_excel_source_options() -> Dict[str, List[str]]:
     """
     Reads Source_Data.xlsx and returns unique values for dropdowns.
@@ -80,7 +78,7 @@ def add_backtest_trade(trade_data: Dict) -> int:
         'wave_atm_pe_tmj', 'wave_future_buildup'
     ]
 
-    placeholders = ", ".join(["?"] * len(columns))
+    placeholders = ", ".join([get_placeholder()] * len(columns))
 
     data_to_insert = {col: trade_data.get(col) for col in columns}
     col_names = ", ".join(columns)
@@ -90,6 +88,12 @@ def add_backtest_trade(trade_data: Dict) -> int:
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
+            if get_placeholder() == "%s": # Postgres handling for ID
+                query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders}) RETURNING id"
+                cursor.execute(query, tuple(data_to_insert.values()))
+                new_id = cursor.fetchone()[0]
+                conn.commit()
+                return new_id
             query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
             cursor.execute(query, tuple(data_to_insert.values()))
             conn.commit()
@@ -111,7 +115,7 @@ def get_backtest_trades(session: str = None) -> pd.DataFrame:
         with conn:
             # pd.read_sql_query handles the cursor internally
             if session:
-                query = "SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = ? ORDER BY timestamp DESC"
+                query = f"SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = {get_placeholder()} ORDER BY timestamp DESC"
                 return pd.read_sql_query(query, conn, params=(session,))
             query = "SELECT * FROM trades WHERE is_backtest = 1 ORDER BY timestamp DESC"
             return pd.read_sql_query(query, conn)
@@ -189,9 +193,12 @@ def delete_backtest_trade(trade_id: int):
         with conn:
             cursor = conn.cursor()
             # Safety check to ensure we only delete backtest records
-            cursor.execute("DELETE FROM trades WHERE id = ?", (int(trade_id),))
+            cursor.execute(
+                f"DELETE FROM trades WHERE id = {get_placeholder()} AND is_backtest = 1",
+                (int(trade_id),)
+            )
             if cursor.rowcount == 0:
-                print(f"No backtest trade found with ID {trade_id}.")
+                print(f"No backtest trade found with ID {trade_id} (may be a live trade or already deleted).")
             else:
                 conn.commit()
                 print(f"Backtest trade ID {trade_id} deleted.")

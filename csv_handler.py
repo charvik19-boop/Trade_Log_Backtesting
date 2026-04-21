@@ -1,9 +1,15 @@
 import pandas as pd
-import tkinter as tk
-from tkinter import filedialog
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# tkinter is optional — not available on headless/cloud servers
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    _TKINTER_AVAILABLE = True
+except ImportError:
+    _TKINTER_AVAILABLE = False
 import trade_log
 import backtest_log
 
@@ -46,6 +52,10 @@ def import_trades_from_csv(file_path: Optional[str] = None, is_backtest: bool = 
     Maps common CSV headers to database columns and validates required fields.
     """
     if file_path is None:
+        if not _TKINTER_AVAILABLE:
+            print("Error: tkinter is not available in this environment. "
+                  "Please provide a 'file_path' argument directly.")
+            return 0
         root = tk.Tk()
         root.withdraw()  # Hide the main tkinter window
         file_path = filedialog.askopenfilename(

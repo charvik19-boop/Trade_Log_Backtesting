@@ -3,6 +3,7 @@ import pandas as pd
 import backtest_log
 import analytics
 import trade_log
+import supabase_storage
 import os
 from pathlib import Path
 from datetime import datetime
@@ -209,11 +210,14 @@ def show_edit_popup(trade_id):
         st.rerun()
 
 @st.dialog("⚠️ Confirm Deletion")
-def confirm_delete_dialog(trade_id, symbol):
+def confirm_delete_dialog(trade_id, symbol, screenshot_path=None):
     st.warning(f"Are you sure you want to permanently delete the trade for **{symbol}** (ID: {trade_id})?")
     st.info("This action cannot be undone.")
     if st.button("🔥 Yes, Delete Permanently", type="primary", width='stretch'):
         backtest_log.delete_backtest_trade(trade_id)
+        # Also remove the screenshot from Supabase Storage if it was a cloud URL
+        if screenshot_path and screenshot_path.startswith("http"):
+            supabase_storage.delete_screenshot(screenshot_path)
         st.success("Trade deleted.")
         st.rerun()
 
@@ -238,15 +242,34 @@ init_app_connection()
 if 'last_bt_sel' not in st.session_state:
     st.session_state.last_bt_sel = None
 
-# Fetch options from Excel once for all modules that need it
-opts = backtest_log.get_excel_source_options()
+# Fetch options from Excel once — cached here in the UI layer so backtest_log.py
+# stays decoupled from Streamlit.
+@st.cache_data(show_spinner="Loading strategy options...")
+def load_excel_options():
+    return backtest_log.get_excel_source_options()
+
+opts = load_excel_options()
 
 st.title("📈 Pro Backtesting Journal")
 
 # Sidebar for navigation
 menu = st.sidebar.selectbox("Module", ["Trade Entry", "Trade History", "Analytics"])
 db_type = trade_log.get_active_db_type()
-st.sidebar.info(f"🏠 {db_type}")
+if db_type == "POSTGRES" and trade_log.DATABASE_URL:
+    try:
+        from urllib.parse import urlparse as _up
+        host = _up(trade_log.DATABASE_URL).hostname or "cloud"
+    except Exception:
+        host = "cloud"
+    st.sidebar.success(f"🚀 {db_type} | {host}")
+else:
+    st.sidebar.info(f"🏠 {db_type}")
+
+# Storage status indicator
+if supabase_storage.is_storage_available():
+    st.sidebar.success("☁️ Storage: Supabase")
+else:
+    st.sidebar.info("📁 Storage: Local")
 
 if menu == "Trade Entry":
     st.header("New Backtest Entry")
@@ -437,21 +460,31 @@ if menu == "Trade Entry":
         if st.button("Save Full Trade", type="primary", width='stretch') or save_tide or save_wave:
             screenshot_path = None
             if uploaded_file is not None:
-                # Ensure screenshots directory exists
-                local_folder = "screenshots"
-                os.makedirs(local_folder, exist_ok=True)
-                
-                file_ext = Path(uploaded_file.name).suffix
+                file_ext = Path(uploaded_file.name).suffix.lower()
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe_symbol = "".join(c for c in symbol if c.isalnum() or c in ('_', '-')) or "UNKNOWN"
                 filename = f"BT_{safe_symbol}_{ts}{file_ext}"
-                local_path = os.path.join(local_folder, filename)
-                
-                # Save locally first
-                with open(local_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                screenshot_path = local_path
+                file_bytes = bytes(uploaded_file.getbuffer())
+
+                # Determine MIME type
+                _mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+                content_type = _mime.get(file_ext, "image/png")
+
+                # Try Supabase Storage first; fall back to local disk
+                if supabase_storage.is_storage_available():
+                    cloud_url = supabase_storage.upload_screenshot(file_bytes, filename, content_type)
+                    if cloud_url:
+                        screenshot_path = cloud_url
+                    else:
+                        st.warning("☁️ Cloud upload failed — saving screenshot locally instead.")
+
+                if screenshot_path is None:  # local fallback
+                    local_folder = "screenshots"
+                    os.makedirs(local_folder, exist_ok=True)
+                    local_path = os.path.join(local_folder, filename)
+                    with open(local_path, "wb") as f:
+                        f.write(file_bytes)
+                    screenshot_path = local_path
 
             full_data = {
                 "strategy": strategy, "symbol": symbol, "sector": sector,
@@ -636,7 +669,11 @@ elif menu == "Trade History":
             if st.button("🗑️ Delete Selected Trade", type="secondary", width='stretch'):
                 if current_selection is not None:
                     selected_trade = df.iloc[current_selection]
-                    confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
+                    confirm_delete_dialog(
+                        int(selected_trade['id']),
+                        selected_trade['symbol'],
+                        selected_trade.get('screenshot_path')
+                    )
                 else:
                     st.warning("Please select a row in the table above to delete.")
             
@@ -644,8 +681,12 @@ elif menu == "Trade History":
             with st.popover("Manual ID Action"):
                 sel_sr_no = st.number_input("Enter Sr.No to Delete", min_value=0, max_value=len(df), step=1)
                 if st.button("Delete by Sr.No", type="primary"):
-                     selected_trade = df.iloc[sel_sr_no - 1]
-                     confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
+                    selected_trade = df.iloc[sel_sr_no - 1]
+                    confirm_delete_dialog(
+                        int(selected_trade['id']),
+                        selected_trade['symbol'],
+                        selected_trade.get('screenshot_path')
+                    )
     else:
         st.info("No trades found for this session.")
 
