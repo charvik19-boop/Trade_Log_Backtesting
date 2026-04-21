@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 import os
-from trade_log import get_connection, init_db, LOCAL_DB_PATH, DATABASE_URL, ORACLE_DSN
+from trade_log import get_connection, init_db, LOCAL_DB_PATH
 
 def migrate_data():
     """
@@ -9,10 +9,6 @@ def migrate_data():
     """
     if not os.path.exists(LOCAL_DB_PATH):
         print(f"Error: Local database {LOCAL_DB_PATH} not found.")
-        return
-
-    if not DATABASE_URL and not ORACLE_DSN:
-        print("Error: No Cloud Database (DATABASE_URL or ORACLE_DSN) found in .env")
         return
 
     print("Reading local data...")
@@ -40,11 +36,7 @@ def migrate_data():
     columns = [col for col in df.columns if col != 'id'] # Let Cloud handle IDs
     col_names = ", ".join(columns)
     
-    if ORACLE_DSN:
-        placeholders = ", ".join([f":{i+1}" for i in range(len(columns))])
-    else:
-        placeholders = ", ".join(["%s"] * len(columns))
-
+    placeholders = ", ".join(["?"] * len(columns))
     query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
 
     success_count = 0

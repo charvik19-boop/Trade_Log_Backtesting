@@ -4,17 +4,7 @@ import pandas as pd
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
-from trade_log import get_connection, init_db, calculate_pnl_metrics, DATABASE_URL, ORACLE_DSN, get_active_db_type
-
-try:
-    import psycopg2
-except ImportError:
-    class psycopg2: Error = Exception
-
-try:
-    import oracledb
-except ImportError:
-    class oracledb: Error = Exception
+from trade_log import get_connection, init_db, calculate_pnl_metrics
 
 @st.cache_data(show_spinner="Loading strategy options...")
 def get_excel_source_options() -> Dict[str, List[str]]:
@@ -90,12 +80,7 @@ def add_backtest_trade(trade_data: Dict) -> int:
         'wave_atm_pe_tmj', 'wave_future_buildup'
     ]
 
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholders = ", ".join([f":{i+1}" for i in range(len(columns))])
-    else:
-        placeholder = "%s" if db_type == "POSTGRES" else "?"
-        placeholders = ", ".join([placeholder] * len(columns))
+    placeholders = ", ".join(["?"] * len(columns))
 
     data_to_insert = {col: trade_data.get(col) for col in columns}
     col_names = ", ".join(columns)
@@ -105,20 +90,11 @@ def add_backtest_trade(trade_data: Dict) -> int:
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            if db_type == "POSTGRES":
-                # Standard Postgres approach using RETURNING
-                query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders}) RETURNING id"
-                cursor.execute(query, tuple(data_to_insert.values()))
-                new_id = cursor.fetchone()[0]
-                conn.commit()
-                return new_id
-            
             query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
             cursor.execute(query, tuple(data_to_insert.values()))
-
             conn.commit()
             return cursor.lastrowid
-    except (sqlite3.Error, psycopg2.Error, oracledb.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error adding backtest trade: {e}")
         return -1
     finally:
@@ -129,25 +105,17 @@ def get_backtest_trades(session: str = None) -> pd.DataFrame:
     """
     Returns backtest trades as a DataFrame. Optionally filtered by session.
     """
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholder = ":1"
-    elif db_type == "POSTGRES":
-        placeholder = "%s"
-    else:
-        placeholder = "?"
-    
     conn = None
     try:
         conn = get_connection()
         with conn:
             # pd.read_sql_query handles the cursor internally
             if session:
-                query = f"SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = {placeholder} ORDER BY timestamp DESC"
+                query = "SELECT * FROM trades WHERE is_backtest = 1 AND backtest_session = ? ORDER BY timestamp DESC"
                 return pd.read_sql_query(query, conn, params=(session,))
             query = "SELECT * FROM trades WHERE is_backtest = 1 ORDER BY timestamp DESC"
             return pd.read_sql_query(query, conn)
-    except (sqlite3.Error, psycopg2.Error, pd.io.sql.DatabaseError) as e:
+    except (sqlite3.Error, pd.io.sql.DatabaseError) as e:
         print(f"Error fetching backtest trades: {e}")
         return pd.DataFrame()
     finally:
@@ -165,7 +133,7 @@ def get_all_backtest_sessions() -> List[str]:
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT backtest_session FROM trades WHERE is_backtest = 1")
             return [row[0] for row in cursor.fetchall() if row[0] is not None]
-    except (sqlite3.Error, psycopg2.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error fetching sessions: {e}")
         return []
     finally:
@@ -215,27 +183,19 @@ def delete_backtest_trade(trade_id: int):
     """
     Deletes a record only if it is marked as a backtest trade.
     """
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholder = ":1"
-    elif db_type == "POSTGRES":
-        placeholder = "%s"
-    else:
-        placeholder = "?"
-
     conn = None
     try:
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
             # Safety check to ensure we only delete backtest records
-            cursor.execute(f"DELETE FROM trades WHERE id = {placeholder}", (int(trade_id),))
+            cursor.execute("DELETE FROM trades WHERE id = ?", (int(trade_id),))
             if cursor.rowcount == 0:
                 print(f"No backtest trade found with ID {trade_id}.")
             else:
                 conn.commit()
                 print(f"Backtest trade ID {trade_id} deleted.")
-    except (sqlite3.Error, psycopg2.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error deleting backtest trade: {e}")
     finally:
         if conn:

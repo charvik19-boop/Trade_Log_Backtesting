@@ -96,7 +96,7 @@ def show_screenshot_popup(img_path, sr_no):
 
     # Check if it's a URL (Cloud) or local path
     if img_path.startswith("http") or os.path.exists(img_path):
-        st.image(img_path, width='stretch', caption=f"Screenshot for Trade Sr.No: {sr_no}")
+        st.image(img_path, use_container_width=True, caption=f"Screenshot for Trade Sr.No: {sr_no}")
     else:
         st.error(f"Screenshot file not found for Sr.No {sr_no}")
 
@@ -204,7 +204,7 @@ def show_edit_popup(trade_id):
         updated_data['exit_reason'] = st.text_area("Exit Reason", value=trade.get('exit_reason') or "")
         updated_data['notes'] = st.text_area("General Notes", value=trade.get('notes') or "")
 
-    if st.button("🚀 Update Trade", type="primary", width='stretch'):
+    if st.button("🚀 Update Trade", type="primary", use_container_width=True):
         trade_log.update_trade(trade_id, updated_data) # This button is inside a dialog, use_container_width is not directly applicable here.
         st.success("Trade updated successfully!")
         st.rerun()
@@ -213,7 +213,7 @@ def show_edit_popup(trade_id):
 def confirm_delete_dialog(trade_id, symbol):
     st.warning(f"Are you sure you want to permanently delete the trade for **{symbol}** (ID: {trade_id})?")
     st.info("This action cannot be undone.")
-    if st.button("🔥 Yes, Delete Permanently", type="primary", width="stretch"):
+    if st.button("🔥 Yes, Delete Permanently", type="primary", use_container_width=True):
         backtest_log.delete_backtest_trade(trade_id)
         st.success("Trade deleted.")
         st.rerun()
@@ -247,12 +247,7 @@ st.title("📈 Pro Backtesting Journal")
 # Sidebar for navigation
 menu = st.sidebar.selectbox("Module", ["Trade Entry", "Trade History", "Analytics"])
 db_type = trade_log.get_active_db_type()
-if db_type == "POSTGRES" and trade_log.DATABASE_URL:
-    # Extract host from URL to show in sidebar
-    host = trade_log.DATABASE_URL.split('@')[-1].split(':')[0]
-    st.sidebar.success(f"🚀 {db_type} | {host}")
-else:
-    st.sidebar.info(f"🏠 {db_type}")
+st.sidebar.info(f"🏠 {db_type}")
 
 if menu == "Trade Entry":
     st.header("New Backtest Entry")
@@ -276,9 +271,9 @@ if menu == "Trade Entry":
     # (1.5) Top Level Action Buttons
     top_btn1, top_btn2, _ = st.columns([1, 1, 4])
     with top_btn1:
-        save_main = st.button("💾 Save Full Trade", type="primary", width='stretch')
+        save_main = st.button("💾 Save Full Trade", type="primary", use_container_width=True)
     with top_btn2: # This button is inside a column, use_container_width is not directly applicable here.
-        if st.button("🧹 Clear All Fields", width='stretch'):
+        if st.button("🧹 Clear All Fields", use_container_width=True):
             st.session_state.clear()
             st.rerun()
 
@@ -378,9 +373,9 @@ if menu == "Trade Entry":
         st.markdown("---")
         t_col1, t_col2 = st.columns(2)
         with t_col1:
-            save_tide = st.button("Save TIDE", key="btn_save_tide", width='stretch')
+            save_tide = st.button("Save TIDE", key="btn_save_tide", use_container_width=True)
         with t_col2:
-            if st.button("Clear TIDE", key="btn_clear_tide", width='stretch'):
+            if st.button("Clear TIDE", key="btn_clear_tide", use_container_width=True):
                 clear_section_keys("tide_")
 
 
@@ -397,9 +392,9 @@ if menu == "Trade Entry":
         st.markdown("---")
         w_col1, w_col2 = st.columns(2)
         with w_col1:
-            save_wave = st.button("Save WAVE", key="btn_save_wave", width='stretch')
+            save_wave = st.button("Save WAVE", key="btn_save_wave", use_container_width=True)
         with w_col2:
-            if st.button("Clear WAVE", key="btn_clear_wave", width='stretch'):
+            if st.button("Clear WAVE", key="btn_clear_wave", use_container_width=True):
                 clear_section_keys("wave_")
 
     with right_col:
@@ -440,7 +435,7 @@ if menu == "Trade Entry":
 
         uploaded_file = st.file_uploader("📸 Attach Screenshot", type=['png', 'jpg', 'jpeg'], key="entry_screenshot")
         
-        if st.button("Save Full Trade", type="primary", width='stretch') or save_tide or save_wave:
+        if st.button("Save Full Trade", type="primary", use_container_width=True) or save_tide or save_wave:
             screenshot_path = None
             if uploaded_file is not None:
                 # Ensure screenshots directory exists
@@ -607,7 +602,7 @@ elif menu == "Trade History":
         # height=600 utilizes more screen space while allowing scrollbars
         event = st.dataframe(
             display_df.style.format(format_dict).set_properties(**{'text-align': 'center'}),
-            width='stretch', 
+            use_container_width=True,
             hide_index=True,
             on_select="rerun",
             height=600,
@@ -622,7 +617,7 @@ elif menu == "Trade History":
         current_selection = event.selection.rows[0] if event.selection.rows else None
 
         with btn_col1:
-            if st.button("📝 Edit Selected Trade", width='stretch', type="primary"):
+            if st.button("📝 Edit Selected Trade", use_container_width=True, type="primary"):
                 if current_selection is not None:
                     show_edit = True
                 else:
@@ -639,7 +634,7 @@ elif menu == "Trade History":
         st.session_state.last_bt_sel = current_selection
 
         with btn_col2:
-            if st.button("🗑️ Delete Selected Trade", type="secondary", width='stretch'):
+            if st.button("🗑️ Delete Selected Trade", type="secondary", use_container_width=True):
                 if current_selection is not None:
                     selected_trade = df.iloc[current_selection]
                     confirm_delete_dialog(int(selected_trade['id']), selected_trade['symbol'])
@@ -745,7 +740,7 @@ elif menu == "Analytics":
         # Monthly Returns (Optional, can be a table or another plot)
         if not adv['monthly_returns'].empty:
             st.subheader("Monthly Returns")
-            st.dataframe(adv['monthly_returns'].to_frame(name='PnL').style.format("₹{:,.2f}"), width='stretch')
+            st.dataframe(adv['monthly_returns'].to_frame(name='PnL').style.format("₹{:,.2f}"), use_container_width=True)
 
     else:
         st.info("No trade data available to generate analytics for the selected session.")

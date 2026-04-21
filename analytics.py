@@ -6,7 +6,6 @@ import trade_log
 import backtest_log
 from typing import Dict, Optional, Any
 from fpdf import FPDF
-import io
 
 def calculate_advanced_metrics(is_backtest: bool = False, session: str = None, df: pd.DataFrame = None) -> Dict:
     """
@@ -247,7 +246,7 @@ def generate_pdf_report(metrics: Dict[str, Any], filter_info: str = "All Data") 
         pdf.cell(100, 10, f"{display_key}:", border=1)
         pdf.cell(0, 10, display_val, border=1, ln=True)
 
-    # Return as bytes
+    # Return as bytes (fpdf2 returns bytearray by default; convert to bytes for Streamlit)
     return bytes(pdf.output())
 
 # ==========================================

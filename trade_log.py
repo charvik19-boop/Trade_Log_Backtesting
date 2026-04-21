@@ -1,20 +1,10 @@
 import sqlite3
-try:
-    import psycopg2
-    HAS_POSTGRES = True
-except ImportError:
-    HAS_POSTGRES = False
-
-HAS_ORACLE = False # Logic for Oracle remains local-only for now
-
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 import os
 from pathlib import Path
-import time
 from dotenv import load_dotenv
-from urllib.parse import urlparse, quote_plus
 
 # Database Configuration
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,83 +13,22 @@ if (BASE_DIR / ".env").exists():
 
 LOCAL_DB_PATH = os.path.join(BASE_DIR, "trading_journal.db")
 
-# Force Local Mode
-FORCE_LOCAL = os.getenv("FORCE_LOCAL", "True").lower() == "true"
-
-raw_db_url = os.getenv("DATABASE_URL")
-if raw_db_url:
-    # Standardize the schema to postgresql://
-    db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
-    
-    # Automatically URL-encode the password if it's not already encoded
-    try:
-        parsed = urlparse(db_url)
-        new_user = parsed.username
-        new_pass = parsed.password
-        if new_pass and ('@' in new_pass or '#' in new_pass):
-            new_pass = quote_plus(new_pass)
-        
-        # Rebuild URL with corrected credentials
-        netloc = f"{new_user}:{new_pass}@{parsed.hostname}"
-        if parsed.port: netloc += f":{parsed.port}"
-        db_url = parsed._replace(netloc=netloc).geturl()
-    except Exception:
-        pass
-
-    DATABASE_URL = db_url
-else:
-    DATABASE_URL = None
-
-ORACLE_DSN = os.getenv("ORACLE_DSN")
-
 def get_active_db_type():
     """Helper to determine which database is currently active."""
-    if FORCE_LOCAL:
-        return "SQLITE"
-    if ORACLE_DSN:
-        return "ORACLE"
-    if DATABASE_URL:
-        return "POSTGRES"
     return "SQLITE"
 
 def get_connection():
     """
-    Returns a database connection.
-    Supports:
-    - Oracle Cloud (via ORACLE_DSN)
-    - PostgreSQL (via DATABASE_URL: GCP Cloud SQL, Supabase, Neon)
-    - Local SQLite (Fallback)
+    Returns a local SQLite database connection.
     """
-    db_type = get_active_db_type()
-    if db_type == "POSTGRES":
-        try:
-            if HAS_POSTGRES:
-                return psycopg2.connect(DATABASE_URL)
-            else:
-                print("CRITICAL: psycopg2 driver not found. Check requirements.txt")
-        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-            # Explicitly catch and retry on unexpected SSL closures
-            if "SSL connection has been closed unexpectedly" in str(e):
-                print("⚠️ SSL connection dropped by pooler. Retrying once...")
-                time.sleep(1)
-                return psycopg2.connect(DATABASE_URL)
-            raise e
-    else:
-        return sqlite3.connect(LOCAL_DB_PATH)
+    return sqlite3.connect(LOCAL_DB_PATH)
 
 def init_db():
     """
     Initializes the SQLite database and creates the trades table if it doesn't exist.
     """
-    db_type = get_active_db_type()
-    
-    # Dynamic syntax based on database engine
-    if db_type == "POSTGRES":
-        id_type = "SERIAL PRIMARY KEY"
-        created_at_def = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    else:
-        id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
-        created_at_def = "TEXT DEFAULT CURRENT_TIMESTAMP"
+    id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
+    created_at_def = "TEXT DEFAULT CURRENT_TIMESTAMP"
 
     text_type = "TEXT"
     real_type = "REAL"
@@ -185,27 +114,9 @@ def init_db():
             """
             cursor.execute(sql)
 
-            # --- Enable RLS and default policies for Postgres ---
-            if db_type == "POSTGRES":
-                try:
-                    cursor.execute("ALTER TABLE trades ENABLE ROW LEVEL SECURITY")
-                    # Create a broad policy to allow the app to function while clearing the Supabase warning
-                    cursor.execute("DROP POLICY IF EXISTS \"Allow all access for postgres role\" ON trades") # New policy name
-                    cursor.execute("DROP POLICY IF EXISTS \"Enable full access for authenticated users\" ON trades")
-                    cursor.execute("DROP POLICY IF EXISTS \"Allow all access\" ON trades")
-                    cursor.execute("CREATE POLICY \"Allow all access for postgres role\" ON trades FOR ALL TO postgres USING (true) WITH CHECK (true)")
-                except Exception as rls_err:
-                    print(f"Note: Could not set RLS policy (might already exist): {rls_err}")
-
-            # --- Migration Logic ---
-            if db_type == "POSTGRES":
-                # Check existing columns in PostgreSQL
-                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'trades'")
-                existing_cols = [row[0] for row in cursor.fetchall()]
-            else:
-                # Check existing columns in SQLite
-                cursor.execute("PRAGMA table_info(trades)")
-                existing_cols = [row[1] for row in cursor.fetchall()]
+            # Check existing columns in SQLite
+            cursor.execute("PRAGMA table_info(trades)")
+            existing_cols = [row[1] for row in cursor.fetchall()]
 
             # List of columns to ensure exist
             new_cols = [
@@ -265,11 +176,6 @@ def init_db():
             cursor.execute("UPDATE trades SET is_backtest = 1 WHERE is_backtest IS NULL")
             
             conn.commit()
-    except psycopg2.OperationalError as e:
-        if "password authentication failed" in str(e):
-            print("❌ DATABASE ERROR: Password authentication failed. Please check your DATABASE_URL in Streamlit Secrets.")
-        else:
-            print(f"❌ DATABASE CONNECTION ERROR: {e}")
     except Exception as e:
         print(f"Error initializing database: {e}")
     finally:
@@ -324,22 +230,12 @@ def get_trade_by_id(trade_id: int) -> Optional[Dict]:
     """
     Retrieves a single trade by its ID.
     """
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholder = ":1"
-    elif db_type == "POSTGRES":
-        placeholder = "%s"
-    else:
-        placeholder = "?"
-    
     conn = None
     try:
         conn = get_connection() # Open connection
-        if db_type == "SQLITE":
-            conn.row_factory = sqlite3.Row
-        
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM trades WHERE id = {placeholder}", (int(trade_id),))
+        cursor.execute("SELECT * FROM trades WHERE id = ?", (int(trade_id),))
         row = cursor.fetchone()
         return dict(row) if row else None
     except Exception as e:
@@ -362,17 +258,9 @@ def update_trade(trade_id: int, updated_data: Dict):
     merged = {**existing, **updated_data}
     merged = calculate_pnl_metrics(merged)
 
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholder = ":1" # Note: Simple positional for update
-    elif db_type == "POSTGRES":
-        placeholder = "%s"
-    else:
-        placeholder = "?"
-
     # Exclude non-updatable internal columns
     updatable_cols = [k for k in merged.keys() if k not in ('id', 'created_at')]
-    set_clause = ", ".join([f"{col} = {placeholder}" for col in updatable_cols])
+    set_clause = ", ".join([f"{col} = ?" for col in updatable_cols])
     values = [merged[col] for col in updatable_cols]
     values.append(trade_id)
 
@@ -381,14 +269,9 @@ def update_trade(trade_id: int, updated_data: Dict):
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            if db_type == "ORACLE":
-                # Oracle needs names or specific positional indices for larger sets usually, 
-                # but simple positional works if bound correctly.
-                cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = :{len(values)}", tuple(values))
-            else:
-                cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = {placeholder}", tuple(values))
+            cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = ?", tuple(values))
             conn.commit()
-    except (sqlite3.Error, psycopg2.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error updating trade ID {trade_id}: {e}")
     finally:
         if conn:
@@ -398,22 +281,14 @@ def delete_trade(trade_id: int):
     """
     Deletes a trade record by ID.
     """
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholder = ":1"
-    elif db_type == "POSTGRES":
-        placeholder = "%s"
-    else:
-        placeholder = "?"
-
     conn = None
     try:
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            cursor.execute(f"DELETE FROM trades WHERE id = {placeholder}", (trade_id,))
+            cursor.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
             conn.commit()
-    except (sqlite3.Error, psycopg2.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error deleting trade ID {trade_id}: {e}")
     finally:
         if conn:
@@ -434,13 +309,7 @@ def add_trade(trade_data: Dict) -> int:
         'market_context', 'notes', 'screenshot_path', 'sector', 'trade_type'
     ]
 
-    db_type = get_active_db_type()
-    if db_type == "ORACLE":
-        placeholders = ", ".join([f":{i+1}" for i in range(len(columns))])
-    else:
-        placeholder = "%s" if db_type == "POSTGRES" else "?"
-        placeholders = ", ".join([placeholder] * len(columns))
-
+    placeholders = ", ".join(["?"] * len(columns))
     col_names = ", ".join(columns)
     data_to_insert = [trade_data.get(col) for col in columns]
 
@@ -449,18 +318,11 @@ def add_trade(trade_data: Dict) -> int:
         conn = get_connection()
         with conn:
             cursor = conn.cursor()
-            if db_type == "POSTGRES":
-                query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders}) RETURNING id"
-                cursor.execute(query, tuple(data_to_insert))
-                new_id = cursor.fetchone()[0]
-                conn.commit()
-                return new_id
-            
             query = f"INSERT INTO trades ({col_names}) VALUES ({placeholders})"
             cursor.execute(query, tuple(data_to_insert))
             conn.commit()
             return cursor.lastrowid
-    except (sqlite3.Error, psycopg2.Error) as e:
+    except sqlite3.Error as e:
         print(f"Error adding live trade: {e}")
         return -1
     finally:
