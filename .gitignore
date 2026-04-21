@@ -2,17 +2,14 @@
 __pycache__/
 *.py[cod]
 
-# Local Environment & Secrets
+# Environment variables (sensitive data)
 .env
-venv/
-.venv/
 
-# Streamlit folders
-.streamlit/
+# Local Database
+trading_journal.db
+*.db-journal
+*.db-shm
+*.db-wal
 
-# Local Data & Screenshots
-*.db
+# Screenshots (Optional: keep if you want them in repo, remove if personal)
 screenshots/
-*.csv
-*.xlsx
-!Source_Data.xlsx

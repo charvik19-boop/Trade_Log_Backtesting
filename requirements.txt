@@ -1,8 +1,7 @@
-pandas
 streamlit>=1.34.0
-supabase
-python-dotenv
+pandas
 matplotlib
+numpy
 fpdf2
-psycopg2-binary
+python-dotenv
 openpyxl
